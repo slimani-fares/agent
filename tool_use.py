@@ -1,8 +1,7 @@
 import os
+import json
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
-from google.genai.errors import ClientError, ServerError
+from openai import OpenAI, APIError, RateLimitError
 
 load_dotenv()
 
@@ -13,22 +12,25 @@ instructions = "You are an Agent and your name is Limbo"
 
 # ---------- Tool: calculator ----------
 calculator_declaration = {
-    "name": "calculator",
-    "description": (
-        "Evaluates a Python mathematical expression and returns the result as a string. "
-        "Use Python operators: + - * / for basic ops, ** for exponentiation (NOT ^), "
-        "// for integer division, % for modulo. Use parentheses for grouping. "
-        "Examples: '5 ** 2' for 5 squared, '(10 + 2) * 3', '2 ** 0.5' for square root."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "expression": {
-                "type": "string",
-                "description": "A string representing the mathematical expression to evaluate.",
+    "type": "function",
+    "function": {
+        "name": "calculator",
+        "description": (
+            "Evaluates a Python mathematical expression and returns the result as a string. "
+            "Use Python operators: + - * / for basic ops, ** for exponentiation (NOT ^), "
+            "// for integer division, % for modulo. Use parentheses for grouping. "
+            "Examples: '5 ** 2' for 5 squared, '(10 + 2) * 3', '2 ** 0.5' for square root."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "A string representing the mathematical expression to evaluate.",
+                },
             },
+            "required": ["expression"],
         },
-        "required": ["expression"],
     },
 }
 
@@ -41,21 +43,17 @@ def calculator(expression: str) -> str:
 
 
 # ---------- LLM setup ----------
-client = genai.Client()
-MODEL = "gemini-2.5-flash-lite"
-
-calculator_tool = types.Tool(function_declarations=[calculator_declaration])
-
-config = types.GenerateContentConfig(
-    system_instruction=instructions,
-    # >1 => more creative; ~0 => near-deterministic
-    temperature=1,
-    tools=[calculator_tool],
+client = OpenAI(
+    api_key=os.environ["GROQ_API_KEY"],
+    base_url="https://api.groq.com/openai/v1",
 )
+MODEL = "llama-3.3-70b-versatile"
+
+tools = [calculator_declaration]
 
 
 # ---------- Chat loop ----------
-chat_history = []
+chat_history = [{"role": "system", "content": instructions}]
 
 print("Welcome back !")
 while True:
@@ -66,49 +64,70 @@ while True:
     if not user_input:
         continue
 
-    chat_history.append({"role": "user", "parts": [{"text": user_input}]})
+    chat_history.append({"role": "user", "content": user_input})
 
     try:
-        response = client.models.generate_content(
+        response = client.chat.completions.create(
             model=MODEL,
-            config=config,
-            contents=chat_history,
+            messages=chat_history,
+            temperature=0,
+            tools=tools,
         )
 
-        tool_call = response.candidates[0].content.parts[0].function_call
+        message = response.choices[0].message
+        tool_calls = message.tool_calls
 
-        if tool_call:
-            # 1. Record the model's function_call turn.
-            chat_history.append(response.candidates[0].content)
+        if tool_calls:
+            # 1. Record the model's tool_call turn (must include tool_calls).
+            chat_history.append({
+                "role": "assistant",
+                "content": message.content,  # often None when there are tool_calls
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            })
 
-            # 2. Dispatch to the matching Python function.
-            if tool_call.name == "calculator":
-                result = calculator(**tool_call.args)
+            # 2. Dispatch each tool call.
+            for tc in tool_calls:
+                name = tc.function.name
+                args = json.loads(tc.function.arguments)
 
-                # 3. Send the tool result back to the model.
+                if name == "calculator":
+                    result = calculator(**args)
+                else:
+                    result = f"Error: unknown tool {name}"
+
+                # 3. Append the tool result.
                 chat_history.append({
-                    "role": "user",
-                    "parts": [{
-                        "function_response": {
-                            "name": tool_call.name,
-                            "response": {"result": result},
-                        }
-                    }],
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
                 })
 
-                # 4. Second API call: model produces the user-facing reply.
-                response = client.models.generate_content(
-                    model=MODEL,
-                    config=config,
-                    contents=chat_history,
-                )
-                print(response.text)
-                chat_history.append({"role": "model", "parts": [{"text": response.text}]})
-        else:
-            print(response.text)
-            chat_history.append({"role": "model", "parts": [{"text": response.text}]})
+            # 4. Second API call: model produces the user-facing reply.
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=chat_history,
+                temperature=0,
+                tools=tools,
+            )
+            final_text = response.choices[0].message.content
+            print(final_text)
+            chat_history.append({"role": "assistant", "content": final_text})
 
-    except (ClientError, ServerError) as e:
-        print(f" API error {e.code}: {e.message}")
+        else:
+            print(message.content)
+            chat_history.append({"role": "assistant", "content": message.content})
+
+    except (APIError, RateLimitError) as e:
+        print(f"API error: {e}")
         chat_history.pop()
         continue
