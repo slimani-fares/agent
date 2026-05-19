@@ -209,7 +209,6 @@ while True:
             final_text = message.content
             print(final_text)
             chat_history.append({"role": "assistant", "content": final_text})
-            log("final_reply", text=final_text)
             
 
         else:
