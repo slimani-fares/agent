@@ -3,8 +3,10 @@
 Usage:
     python view_trace.py trace.jsonl
     python view_trace.py traces/trace-20260519-112147.jsonl
-    python view_trace.py trace.jsonl --turn 9ca30ad5     # filter to one turn
-    python view_trace.py trace.jsonl --errors            # only turns with errors
+    python view_trace.py --latest                        # use most recent trace in traces/
+    python view_trace.py --latest --turn 9ca30ad5        # filter to one turn
+    python view_trace.py --latest --errors               # only turns with errors
+    python view_trace.py --latest --tool web_search      # only turns calling a tool
 """
 
 import argparse
@@ -92,11 +94,24 @@ def turn_header(turn_id: str, events: list[dict]) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("path", type=Path, help="path to trace.jsonl")
+    ap.add_argument("path", type=Path, nargs="?", help="path to trace.jsonl")
+    ap.add_argument("--latest", action="store_true",
+                    help="ignore `path` and use the most recent trace in traces/")
     ap.add_argument("--turn", help="filter to a specific turn_id")
     ap.add_argument("--errors", action="store_true", help="only show turns with errors")
     ap.add_argument("--tool", help="only show turns where this tool was called")
     args = ap.parse_args()
+
+    if args.latest:
+        traces_dir = Path("traces")
+        files = sorted(traces_dir.glob("trace-*.jsonl"))
+        if not files:
+            sys.exit("no trace files found in traces/")
+        args.path = files[-1]
+        print(f"# using {args.path}\n")
+
+    if args.path is None:
+        sys.exit("usage: view_trace.py PATH | --latest")
 
     if not args.path.exists():
         sys.exit(f"file not found: {args.path}")
