@@ -9,3 +9,10 @@
 
 -also learned a bit about prompt injections and the so many ways they can be passed (in files..in code ...etc)
 
+-while implementing the embedding i read in the docs that the task type might change the embedding so for now i am doing a basic retrieval-document and query and then later i will do specefic ones depending on the downstream task 
+ 
+-tools are wired in correctly but there is certainly work to be done on them because most of them are not used untill the llm is exlicilty asked to do so i have to fix this so he knows how to use them just by insinuating
+
+-also things like logging are now as simple as possible later they will be improved and customised 
+
+-memory managament also i will probably add options to clear and browse specefic documents

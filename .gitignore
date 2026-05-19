@@ -19,3 +19,5 @@ Thumbs.db
 #logging
 traces/
 
+#vectordb
+chroma_store/
