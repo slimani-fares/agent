@@ -92,6 +92,15 @@ def web_search(query: str) -> str:
         )
     return "\n\n".join(formatted)
 
+
+
+# ---------- Tool dispatch ----------
+TOOLS = {
+    "calculator": calculator,
+    "web_search": web_search,
+}
+
+
 # ---------- LLM setup ----------
 client = OpenAI(
     api_key=os.environ["GROQ_API_KEY"],
@@ -148,7 +157,16 @@ while True:
         finish_reason=response.choices[0].finish_reason,
         usage=response.usage.model_dump() if response.usage else None)
 
-        if tool_calls:
+        #to not burn quota in case the model keeps calling tools 
+        MAX_TOOL_ITERATIONS = 10
+        iterations = 0
+
+        while tool_calls:
+            iterations += 1
+            if iterations > MAX_TOOL_ITERATIONS:
+                log("error", message=f"exceeded {MAX_TOOL_ITERATIONS} tool iterations")
+                break
+
             # 1. Record the model's tool_call turn (must include tool_calls).
             chat_history.append({
                 "role": "assistant",
@@ -173,12 +191,14 @@ while True:
 
                 log("tool_call", name=name, args=args)
 
-                if name == "calculator":
-                    result = calculator(**args)
-                elif name== "web_search":
-                    result=web_search(**args)
-                else:
+                fn = TOOLS.get(name)
+                if fn is None:
                     result = f"Error: unknown tool {name}"
+                else:
+                    try:
+                        result = fn(**args)
+                    except Exception as e:
+                        result = f"Error running {name}: {type(e).__name__}: {e}"
 
                 # 3. Append and log the tool result.
                 chat_history.append({
@@ -200,21 +220,23 @@ while True:
                 tools=tools,
             )
             message = response.choices[0].message
+            tool_calls = message.tool_calls
+
             #logging the response 
+
             log("api_response",
             content=message.content,
             tool_calls=[{"name": tc.function.name, "args": tc.function.arguments} for tc in (message.tool_calls or [])],
             finish_reason=response.choices[0].finish_reason,
             usage=response.usage.model_dump() if response.usage else None)
-            final_text = message.content
-            print(final_text)
-            chat_history.append({"role": "assistant", "content": final_text})
+
+           
             
 
-        else:
-            print(message.content)
-            chat_history.append({"role": "assistant", "content": message.content})
-            log("final_reply", text=message.content)
+                
+        print(message.content)
+        chat_history.append({"role": "assistant", "content": message.content})
+        log("final_reply", text=message.content)
 
     except (APIError, RateLimitError) as e:
         print(f"API error: {e}")
