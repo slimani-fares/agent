@@ -17,4 +17,5 @@ __pycache__/
 Thumbs.db
 
 #logging
-trace.jsonl
+traces/
+
